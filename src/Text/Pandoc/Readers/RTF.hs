@@ -39,6 +39,7 @@ import Debug.Trace
 
 {-
 TODO:
+- \'hh (hex) - 8bit values in char set (can we support this?)
 - \plain - reset font properties to defaults
 - footnotes
 - lists
@@ -159,7 +160,7 @@ parseRTF = do
   skipMany nl
   toks <- many tok
   -- return $! traceShowId toks
-  doc <- B.doc <$> foldM processTok mempty toks
+  doc <- B.doc <$> (foldM processTok mempty toks >>= emitPar)
   kvs <- sMetadata <$> getState
   pure $ foldr (\(k,v) -> B.setMeta k v) doc kvs
 
@@ -412,18 +413,21 @@ processTok bs (Tok pos tok') = do
       case IntMap.lookup 0 stylesheet of
         Nothing -> pure bs
         Just sty -> foldM processTok bs (styleFormatting sty)
-    ControlWord "par" _ -> do
-      annotatedToks <- reverse . sTextContent <$> getState
-      updateState $ \s -> s{ sTextContent = [] }
-      let justCode = def{ gFontFamily = Just Modern }
-      return $ bs <>
-        if null annotatedToks
-           then mempty
-           else if all ((== justCode) . fst) annotatedToks
-                then B.codeBlock (mconcat $ map snd annotatedToks)
-                else B.para $ B.trimInlines . mconcat
-                            $ map addFormatting annotatedToks
+    ControlWord "par" _ -> emitPar bs
     _ -> pure bs
+
+emitPar :: PandocMonad m => Blocks -> RTFParser m Blocks
+emitPar bs = do
+  annotatedToks <- reverse . sTextContent <$> getState
+  updateState $ \s -> s{ sTextContent = [] }
+  let justCode = def{ gFontFamily = Just Modern }
+  return $ bs <>
+    if null annotatedToks
+       then mempty
+       else if all ((== justCode) . fst) annotatedToks
+            then B.codeBlock (mconcat $ map snd annotatedToks)
+            else B.para $ B.trimInlines . mconcat
+                        $ map addFormatting annotatedToks
 
 -- {\field{\*\fldinst{HYPERLINK "http://pandoc.org"}}{\fldrslt foo}}
 handleField :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
