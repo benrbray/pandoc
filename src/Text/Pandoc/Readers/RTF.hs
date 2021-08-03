@@ -31,7 +31,7 @@ import Text.Pandoc.Definition
 import Text.Pandoc.Options
 import Text.Pandoc.Parsing
 import Text.Pandoc.Shared (safeRead, tshow)
-import Data.Char (isAlphaNum, chr, digitToInt)
+import Data.Char (isAlphaNum, chr, digitToInt, isAscii, isLetter)
 import qualified Data.ByteString.Lazy as BL
 import Data.Digest.Pure.SHA (sha1, showDigest)
 import Data.Maybe (mapMaybe)
@@ -87,7 +87,7 @@ data FontFamily =
   Roman | Swiss | Modern | Script | Decor | Tech | Bidi
   deriving (Show, Eq)
 
-data StyleType = ParagraphStyle | SectionStyle | CharStyle
+data StyleType = ParagraphStyle | SectionStyle | CharStyle | TableStyle
   deriving (Show, Eq)
 
 data Style =
@@ -199,7 +199,7 @@ tok = do
     x <- hexDigit
     y <- hexDigit
     return $ hexToWord (T.pack [x,y])
-  letterSequence = T.pack <$> many1 (satisfy (\c -> c >= 'a' && c <= 'z'))
+  letterSequence = T.pack <$> many1 (satisfy (\c -> isAscii c && isLetter c))
   unformattedText =
     UnformattedText . T.pack <$> many1 (satisfy (not . isSpecial))
   grouped = Grouped <$> (char '{' *> skipMany nl *> manyTill tok (char '}'))
@@ -353,6 +353,10 @@ processTok bs (Tok pos tok') = do
       inGroup $ handlePict bs toks
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       inGroup $ handleStylesheet bs toks
+    Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "pntxta" _) : _) -> pure bs -- TODO
+    Grouped (Tok _ (ControlWord "pntxtb" _) : _) -> pure bs -- TODO
+    Grouped (Tok _ (ControlWord "xmlnstbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "filetbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "expandedcolortbl" _) : _) -> pure bs
@@ -490,8 +494,8 @@ parseStyle (Tok _ (Grouped toks)) = do
         case toks of
           Tok _ (ControlWord "s" (Just n)) : ts -> (ParagraphStyle, n, ts)
           Tok _ (ControlWord "ds" (Just n)) : ts -> (SectionStyle, n, ts)
-          Tok _ (ControlSymbol '*') : Tok _ (ControlWord "cs" (Just n)) : ts
-                                                -> (CharStyle, n, ts)
+          Tok _ (ControlWord "cs" (Just n)) : ts -> (CharStyle, n, ts)
+          Tok _ (ControlWord "ts" (Just n)) : ts -> (TableStyle, n, ts)
           _ -> (ParagraphStyle, 0, toks)
   let styName = case lastMay rest of
                   Just (Tok _ (UnformattedText t)) -> T.dropWhileEnd (==';') t
