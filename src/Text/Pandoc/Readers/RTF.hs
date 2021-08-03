@@ -207,7 +207,9 @@ tok = do
     return $ hexToWord (T.pack [x,y])
   letterSequence = T.pack <$> many1 (satisfy (\c -> isAscii c && isLetter c))
   unformattedText =
-    UnformattedText . T.pack <$> many1 (satisfy (not . isSpecial))
+    UnformattedText . T.pack . mconcat <$>
+      many1 (   many1 (satisfy (not . isSpecial))
+            <|> ("" <$ nl))
   grouped = Grouped <$> (char '{' *> skipMany nl *> manyTill tok (char '}'))
 
 nl :: PandocMonad m => RTFParser m ()
