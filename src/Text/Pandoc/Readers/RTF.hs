@@ -69,6 +69,7 @@ data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
                           , sStylesheet  :: Stylesheet
+                          , sEatChars    :: Int
                           } deriving (Show)
 
 instance Default RTFState where
@@ -79,6 +80,7 @@ instance Default RTFState where
                 , sMetadata = []
                 , sFontTable = mempty
                 , sStylesheet = mempty
+                , sEatChars = 0
                 }
 
 type FontTable = IntMap.IntMap FontFamily
@@ -141,6 +143,7 @@ data Properties =
   , gImage :: Maybe Pict
   , gFontFamily :: Maybe FontFamily
   , gHidden :: Bool
+  , gUC :: Int -- number of ansi chars to skip after unicode char
   } deriving (Show, Eq)
 
 instance Default Properties where
@@ -156,6 +159,7 @@ instance Default Properties where
                     , gImage = Nothing
                     , gFontFamily = Nothing
                     , gHidden = False
+                    , gUC = 1
                     }
 
 type RTFParser m = ParserT Sources RTFState m
@@ -348,6 +352,9 @@ processTok bs (Tok pos tok') = do
                 Grouped (Tok _ (ControlSymbol '*') : toks) -> Grouped toks
                 _ -> tok'
   case tok'' of
+    HexVal _ -> return ()
+    _ -> updateState $ \s -> s{ sEatChars = 0 }
+  case tok'' of
     Grouped (Tok _ (ControlWord "fonttbl" _) : toks) -> inGroup $ do
       let tbl = processFontTable toks
       updateState $ \s -> s{ sFontTable = tbl }
@@ -359,6 +366,7 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       inGroup $ handleStylesheet bs toks
     Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "themedata" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "pntxta" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "pntxtb" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "xmlnstbl" _) : _) -> pure bs
@@ -386,12 +394,16 @@ processTok bs (Tok pos tok') = do
     Grouped toks -> inGroup (foldM processTok bs toks)
     UnformattedText t -> bs <$ addText t
     HexVal n -> bs <$ do
-      charset <- sCharSet <$> getState
-      case charset of
-        ANSI -> addText (T.singleton $ ansiToChar n)
-        Mac  -> addText (T.singleton $ macToChar n)
-        Pc   -> addText (T.singleton $ pcToChar n)
-        Pca  -> addText (T.singleton $ pcaToChar n)
+      eatChars <- sEatChars <$> getState
+      if eatChars == 0
+         then do
+           charset <- sCharSet <$> getState
+           case charset of
+             ANSI -> addText (T.singleton $ ansiToChar n)
+             Mac  -> addText (T.singleton $ macToChar n)
+             Pc   -> addText (T.singleton $ pcToChar n)
+             Pca  -> addText (T.singleton $ pcaToChar n)
+         else updateState $ \s -> s{ sEatChars = eatChars - 1 }
     ControlWord "ansi" _ -> bs <$
       updateState (\s -> s{ sCharSet = ANSI })
     ControlWord "mac" _ -> bs <$
@@ -418,6 +430,7 @@ processTok bs (Tok pos tok') = do
     ControlWord "bullet" _ -> bs <$ addText "\x2022"
     ControlWord "tab" _ -> bs <$ addText "\t"
     ControlWord "line" _ -> bs <$ addText "\n"
+    ControlWord "uc" (Just i) -> bs <$ modifyGroup (\g -> g{ gUC = i })
     ControlWord "cs" (Just n) -> do
       getStyleFormatting n >>= foldM processTok bs
     ControlWord "s" (Just n) -> do
@@ -427,7 +440,13 @@ processTok bs (Tok pos tok') = do
     ControlWord "f" (Just i) -> bs <$ do
       fontTable <- sFontTable <$> getState
       modifyGroup (\g -> g{ gFontFamily = IntMap.lookup i fontTable })
-    ControlWord "u" (Just i) -> bs <$ addText (T.singleton (chr i))
+    ControlWord "u" (Just i) -> bs <$ do
+      st <- getState
+      let curgroup = case sGroupStack st of
+                       [] -> def
+                       (x:_) -> x
+      updateState $ \s -> s{ sEatChars = gUC curgroup }
+      addText (T.singleton (chr i))
     ControlWord "caps" mbp -> bs <$
       modifyGroup (\g -> g{ gCaps = boolParam mbp })
     ControlWord "deleted" mbp -> bs <$
