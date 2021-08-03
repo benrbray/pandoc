@@ -338,7 +338,11 @@ isUnderline _ = False
 processTok :: PandocMonad m => Blocks -> Tok -> RTFParser m Blocks
 processTok bs (Tok pos tok') = do
   setPosition pos
-  case tok' of
+  -- ignore \* at beginning of group:
+  let tok'' = case tok' of
+                Grouped (Tok _ (ControlSymbol '*') : toks) -> Grouped toks
+                _ -> tok'
+  case tok'' of
     Grouped (Tok _ (ControlWord "fonttbl" _) : toks) -> inGroup $ do
       let tbl = processFontTable toks
       updateState $ \s -> s{ sFontTable = tbl }
