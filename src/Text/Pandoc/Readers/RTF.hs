@@ -140,6 +140,7 @@ data Properties =
   , gHyperlink :: Maybe Text
   , gImage :: Maybe Pict
   , gFontFamily :: Maybe FontFamily
+  , gHidden :: Bool
   } deriving (Show, Eq)
 
 instance Default Properties where
@@ -154,6 +155,7 @@ instance Default Properties where
                     , gHyperlink = Nothing
                     , gImage = Nothing
                     , gFontFamily = Nothing
+                    , gHidden = False
                     }
 
 type RTFParser m = ParserT Sources RTFState m
@@ -229,7 +231,8 @@ modifyGroup f =
 
 addFormatting :: (Properties, Text) -> Inlines
 addFormatting (_, "\n") = B.linebreak
-addFormatting (props, txt) = -- Debug.Trace.trace (show (props, txt)) $
+addFormatting (props, _) | gHidden props = mempty
+addFormatting (props, txt) =
   (if gBold props then B.strong else id) .
   (if gItalic props then B.emph else id) .
   (if gDeleted props then B.strikeout else id) .
@@ -331,6 +334,8 @@ isUnderline "uldashd" = True
 isUnderline "uldashdd" = True
 isUnderline "uldb" = True
 isUnderline "ulth" = True
+isUnderline "ulthd" = True
+isUnderline "ulthdash" = True
 isUnderline "ulw" = True
 isUnderline "ulwave" = True
 isUnderline _ = False
@@ -441,8 +446,12 @@ processTok bs (Tok pos tok') = do
       modifyGroup (\g -> g{ gDeleted = boolParam mbp })
     ControlWord "strikedl" mbp -> bs <$
       modifyGroup (\g -> g{ gDeleted = boolParam mbp })
+    ControlWord "striked" mbp -> bs <$
+      modifyGroup (\g -> g{ gDeleted = boolParam mbp })
     ControlWord "scaps" mbp -> bs <$
       modifyGroup (\g -> g{ gSmallCaps = boolParam mbp })
+    ControlWord "v" mbp -> bs <$
+      modifyGroup (\g -> g{ gHidden = boolParam mbp })
     ControlWord x mbp | isUnderline x -> bs <$
       modifyGroup (\g -> g{ gUnderline = boolParam mbp })
     ControlWord "ulnone" _ -> bs <$
