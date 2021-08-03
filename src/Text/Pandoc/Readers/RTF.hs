@@ -305,6 +305,7 @@ isMetadataField "keywords" = True
 isMetadataField "comment" = True
 isMetadataField "doccomm" = True
 isMetadataField "hlinkbase" = True
+isMetadataField "generator" = True
 isMetadataField _ = False
 
 isHeaderFooter :: Text -> Bool
@@ -356,8 +357,12 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "bkmkstart" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "bkmkend" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord f _) : _) | isHeaderFooter f -> pure bs
-    Grouped (Tok _ (ControlWord "info" _) : toks) ->
-      inGroup $ foldM processTok bs toks
+    Grouped (Tok _ (ControlWord "info" _) : toks) -> inGroup $ do
+      -- don't allow anything in here to go into a regular body paragraph
+      textContent <- sTextContent <$> getState
+      result <- inGroup $ foldM processTok bs toks
+      updateState $ \s -> s{ sTextContent = textContent }
+      return result
     Grouped (Tok _ (ControlWord f _) : toks) | isMetadataField f -> inGroup $ do
       _ <- foldM processTok mempty toks
       annotatedToks <- reverse . sTextContent <$> getState
