@@ -369,6 +369,9 @@ processTok bs (Tok pos tok') = do
       inGroup $ handleStylesheet bs toks
     Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "themedata" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "colorschememapping" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "datastore" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "latentstyles" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "pntxta" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "pntxtb" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "xmlnstbl" _) : _) -> pure bs
