@@ -17,7 +17,7 @@ module Text.Pandoc.Readers.RTF (readRTF) where
 import qualified Data.IntMap as IntMap
 import Control.Monad
 import Control.Monad.Except (throwError)
-import Data.List (foldl')
+import Data.List (find, foldl')
 import Data.Default
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -32,11 +32,13 @@ import Text.Pandoc.Shared (safeRead, tshow)
 import Data.Char (isAlphaNum, chr, digitToInt)
 import qualified Data.ByteString.Lazy as BL
 import Data.Digest.Pure.SHA (sha1, showDigest)
+import Data.Maybe (mapMaybe)
+import Safe (lastMay, initSafe)
 import Debug.Trace
 
 {-
 TODO:
-- stylesheets
+- pard etc (reset to style 0)
 - lists
 - tables
 - block quotes
@@ -60,6 +62,7 @@ data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sTextContent :: [(Properties, Text)]
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
+                          , sStylesheet  :: Stylesheet
                           } deriving (Show)
 
 instance Default RTFState where
@@ -68,6 +71,7 @@ instance Default RTFState where
                 , sTextContent = []
                 , sMetadata = []
                 , sFontTable = mempty
+                , sStylesheet = mempty
                 }
 
 type FontTable = IntMap.IntMap FontFamily
@@ -75,6 +79,19 @@ type FontTable = IntMap.IntMap FontFamily
 data FontFamily =
   Roman | Swiss | Modern | Script | Decor | Tech | Bidi
   deriving (Show, Eq)
+
+data StyleType = ParagraphStyle | SectionStyle | CharStyle
+  deriving (Show, Eq)
+
+data Style =
+  Style { styleNum :: Int
+        , styleType :: StyleType
+        , styleBasedOn :: Maybe Int
+        , styleName :: Text
+        , styleFormatting :: [Tok]
+        } deriving (Show, Eq)
+
+type Stylesheet = IntMap.IntMap Style
 
 data PictType =
   Emfblip | Pngblip | Jpegblip
@@ -145,14 +162,14 @@ parseRTF = do
   pure $ foldr (\(k,v) -> B.setMeta k v) doc kvs
 
 data Tok = Tok SourcePos TokContents
-  deriving (Show)
+  deriving (Show, Eq)
 
 data TokContents =
     ControlWord Text (Maybe Int)
   | ControlSymbol Char
   | UnformattedText Text
   | Grouped [Tok]
-  deriving (Show)
+  deriving (Show, Eq)
 
 tok :: PandocMonad m => RTFParser m Tok
 tok = do
@@ -252,6 +269,16 @@ inGroup p = do
           (_:xs) -> xs }
   return result
 
+getStyleFormatting :: PandocMonad m => Int -> RTFParser m [Tok]
+getStyleFormatting stynum = do
+  stylesheet <- sStylesheet <$> getState
+  case IntMap.lookup stynum stylesheet of
+    Nothing -> return []
+    Just sty ->
+      case styleBasedOn sty of
+        Just i -> (<> styleFormatting sty)  <$> getStyleFormatting i
+        Nothing -> return $ styleFormatting sty
+
 isMetadataField :: Text -> Bool
 isMetadataField "title" = True
 isMetadataField "subject" = True
@@ -305,10 +332,11 @@ processTok bs (Tok pos tok') = do
       inGroup $ handleField bs toks
     Grouped (Tok _ (ControlWord "pict" _) : toks) ->
       inGroup $ handlePict bs toks
+    Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
+      inGroup $ handleStylesheet bs toks
     Grouped (Tok _ (ControlWord "filetbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "expandedcolortbl" _) : _) -> pure bs
-    Grouped (Tok _ (ControlWord "stylesheet" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "listtables" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "revtbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "bkmkstart" _) : _) -> pure bs -- TODO
@@ -342,6 +370,12 @@ processTok bs (Tok pos tok') = do
     ControlWord "bullet" _ -> bs <$ addText "\x2022"
     ControlWord "tab" _ -> bs <$ addText "\t"
     ControlWord "line" _ -> bs <$ addText "\n"
+    ControlWord "cs" (Just n) -> do
+      getStyleFormatting n >>= foldM processTok bs
+    ControlWord "s" (Just n) -> do
+      getStyleFormatting n >>= foldM processTok bs
+    ControlWord "ds" (Just n) -> do
+      getStyleFormatting n >>= foldM processTok bs
     ControlWord "f" (Just i) -> bs <$ do
       fontTable <- sFontTable <$> getState
       modifyGroup (\g -> g{ gFontFamily = IntMap.lookup i fontTable })
@@ -370,6 +404,12 @@ processTok bs (Tok pos tok') = do
       modifyGroup (\g -> g{ gUnderline = boolParam mbp })
     ControlWord "ulnone" _ -> bs <$
       modifyGroup (\g -> g{ gUnderline = False })
+    ControlWord "pard" _ -> bs <$ do
+      modifyGroup (const def)
+      stylesheet <- sStylesheet <$> getState
+      case IntMap.lookup 0 stylesheet of
+        Nothing -> pure bs
+        Just sty -> foldM processTok bs (styleFormatting sty)
     ControlWord "par" _ -> do
       annotatedToks <- reverse . sTextContent <$> getState
       updateState $ \s -> s{ sTextContent = [] }
@@ -397,6 +437,44 @@ handleField bs
          modifyGroup $ \g -> g{ gHyperlink = Nothing }
          return result
 handleField bs _ = pure bs
+
+handleStylesheet :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
+handleStylesheet bs toks = do
+  let styles = mapMaybe parseStyle toks
+  updateState $ \s -> s{ sStylesheet = IntMap.fromList
+                                     $ zip (map styleNum styles) styles }
+  pure bs
+
+parseStyle :: Tok -> Maybe Style
+parseStyle (Tok _ (Grouped toks)) = do
+  let (styType, styNum, rest) =
+        case toks of
+          Tok _ (ControlWord "s" (Just n)) : ts -> (ParagraphStyle, n, ts)
+          Tok _ (ControlWord "ds" (Just n)) : ts -> (SectionStyle, n, ts)
+          Tok _ (ControlSymbol '*') : Tok _ (ControlWord "cs" (Just n)) : ts
+                                                -> (CharStyle, n, ts)
+          _ -> (ParagraphStyle, 0, toks)
+  let styName = case lastMay rest of
+                  Just (Tok _ (UnformattedText t)) -> T.dropWhileEnd (==';') t
+                  _ -> mempty
+  let isBasedOn (Tok _ (ControlWord "sbasedon" (Just _))) = True
+      isBasedOn _ = False
+  let styBasedOn = case find isBasedOn toks of
+                     Just (Tok _ (ControlWord "sbasedon" (Just i))) -> Just i
+                     _ -> Nothing
+  let isStyleControl (Tok _ (ControlWord x _)) =
+         x `elem` ["cs", "s", "ds", "additive", "sbasedon", "snext",
+                   "sautoupd", "shidden", "keycode", "alt", "shift",
+                   "ctrl", "fn"]
+      isStyleControl _ = False
+  let styFormatting = filter (not . isStyleControl) (initSafe rest)
+  return $ Style{ styleNum = styNum
+                , styleType = styType
+                , styleBasedOn = styBasedOn
+                , styleName = styName
+                , styleFormatting = styFormatting
+                }
+parseStyle _ = Nothing
 
 handlePict :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
 handlePict bs toks = do
