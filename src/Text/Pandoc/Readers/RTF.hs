@@ -39,7 +39,8 @@ import Debug.Trace
 
 {-
 TODO:
-- pard etc (reset to style 0)
+- \plain - reset font properties to defaults
+- footnotes
 - lists
 - tables
 - block quotes
