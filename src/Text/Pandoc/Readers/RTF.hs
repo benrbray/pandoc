@@ -11,6 +11,7 @@
    Portability : portable
 
 Conversion of RTF documents 'Pandoc' document.
+We target version 1.5 of the RTF spec.
 -}
 module Text.Pandoc.Readers.RTF (readRTF) where
 
