@@ -214,7 +214,8 @@ tests pandocPath =
       let rtfReaderTest s = test' s ["-f", "rtf", "-t", "native", "-s"]
                              ("rtf/" <> s <> ".rtf")
                              ("rtf/" <> s <> ".native")
-       in map rtfReaderTest ["footnote", "accent", "unicode", "image", "link"]
+       in map rtfReaderTest ["footnote", "accent", "unicode", "image", "link",
+                             "heading"]
     , testGroup "writer" $ writerTests' "rtf"
     ]
   , testGroup "ipynb"
