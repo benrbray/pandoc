@@ -19,7 +19,7 @@ import qualified Data.IntMap as IntMap
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Data.List (find, foldl')
-import Data.Word (Word8)
+import Data.Word (Word8, Word16)
 import Data.Default
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -194,7 +194,7 @@ tok = do
     char '\\' *>
       ( (ControlWord <$> letterSequence <*> (parameter <* optional delimChar))
      <|> (HexVal <$> hexVal)
-     <|> (ControlSymbol <$> anyChar))
+     <|> (ControlSymbol <$> anyChar) )
   parameter = do
     hyph <- string "-" <|> pure ""
     rest <- many digit
@@ -358,8 +358,7 @@ processTok bs (Tok pos tok') = do
     _ -> updateState $ \s -> s{ sEatChars = 0 }
   case tok'' of
     Grouped (Tok _ (ControlWord "fonttbl" _) : toks) -> inGroup $ do
-      let tbl = processFontTable toks
-      updateState $ \s -> s{ sFontTable = tbl }
+      updateState $ \s -> s{ sFontTable = processFontTable toks }
       pure bs
     Grouped (Tok _ (ControlWord "field" _) : toks) ->
       inGroup $ handleField bs toks
@@ -367,6 +366,8 @@ processTok bs (Tok pos tok') = do
       inGroup $ handlePict bs toks
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       inGroup $ handleStylesheet bs toks
+    Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "listtable" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "themedata" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "colorschememapping" _) : _) -> pure bs
@@ -376,7 +377,6 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "pntxtb" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "xmlnstbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "filetbl" _) : _) -> pure bs
-    Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "expandedcolortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "listtables" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "revtbl" _) : _) -> pure bs
@@ -435,6 +435,8 @@ processTok bs (Tok pos tok') = do
     ControlWord "bullet" _ -> bs <$ addText "\x2022"
     ControlWord "tab" _ -> bs <$ addText "\t"
     ControlWord "line" _ -> bs <$ addText "\n"
+    ControlSymbol '\n' -> bs <$ addText "\n"
+    ControlSymbol '\r' -> bs <$ addText "\n"
     ControlWord "uc" (Just i) -> bs <$ modifyGroup (\g -> g{ gUC = i })
     ControlWord "cs" (Just n) -> do
       getStyleFormatting n >>= foldM processTok bs
@@ -451,7 +453,12 @@ processTok bs (Tok pos tok') = do
                        [] -> def
                        (x:_) -> x
       updateState $ \s -> s{ sEatChars = gUC curgroup }
-      addText (T.singleton (chr i))
+      -- "RTF control words generally accept signed 16-bit numbers as
+      -- arguments. For this reason, Unicode values greater than 32767
+      -- must be expressed as negative numbers."
+      let codepoint :: Word16
+          codepoint = fromIntegral i
+      addText (T.singleton (chr $ fromIntegral codepoint))
     ControlWord "caps" mbp -> bs <$
       modifyGroup (\g -> g{ gCaps = boolParam mbp })
     ControlWord "deleted" mbp -> bs <$
