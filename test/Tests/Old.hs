@@ -175,7 +175,7 @@ tests pandocPath =
         "tikiwiki-reader.tikiwiki" "tikiwiki-reader.native" ]
   , testGroup "other writers" $ map (\f -> testGroup f $ writerTests' f)
     [ "opendocument" , "context" , "texinfo", "icml", "tei"
-    , "man" , "plain" , "rtf", "asciidoc", "asciidoctor"
+    , "man" , "plain" , "asciidoc", "asciidoctor"
     , "xwiki", "zimwiki"
     ]
   , testGroup "writers-lang-and-dir"
@@ -208,6 +208,13 @@ tests pandocPath =
     [ test' "reader" ["-r", "org", "-w", "native", "-s"]
       "org-select-tags.org" "org-select-tags.native"
     , testGroup "writer" $ writerTests' "org"
+    ]
+  , testGroup "rtf"
+    [ testGroup "reader"
+      [ test' "footnote" ["-r", "rtf", "-w", "native", "-s"]
+          "rtf/footnote.rtf" "rtf/footnote.native"
+      ]
+    , testGroup "writer" $ writerTests' "rtf"
     ]
   , testGroup "ipynb"
     [ test' "reader" ["-f", "ipynb-raw_html-raw_tex+raw_attribute",

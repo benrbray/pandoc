@@ -376,6 +376,8 @@ extra-source-files:
                  test/docx/*.native
                  test/epub/*.epub
                  test/epub/*.native
+                 test/rtf/*.native
+                 test/rtf/*.rtf
                  test/pptx/*.pptx
                  test/pptx/*.native
                  test/ipynb/*.in.native
