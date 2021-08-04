@@ -43,7 +43,6 @@ TODO:
 - lists
 - tables
 - block quotes
-- section headers
 -}
 
 -- | Read RTF from an input string and return a Pandoc document.
@@ -144,6 +143,7 @@ data Properties =
   , gHidden :: Bool
   , gUC :: Int -- number of ansi chars to skip after unicode char
   , gFootnote :: Maybe Blocks
+  , gOutlineLevel :: Maybe Int
   } deriving (Show, Eq)
 
 instance Default Properties where
@@ -161,6 +161,7 @@ instance Default Properties where
                     , gHidden = False
                     , gUC = 1
                     , gFootnote = Nothing
+                    , gOutlineLevel = Nothing
                     }
 
 type RTFParser m = ParserT Sources RTFState m
@@ -431,6 +432,8 @@ processTok bs (Tok pos tok') = do
       updateState (\s -> s{ sCharSet = Pc })
     ControlWord "pca" _ -> bs <$
       updateState (\s -> s{ sCharSet = Pca })
+    ControlWord "outlinelevel" mbp -> bs <$
+      modifyGroup (\g -> g{ gOutlineLevel = mbp })
     ControlSymbol '\\' -> bs <$ addText "\\"
     ControlSymbol '{' -> bs <$ addText "{"
     ControlSymbol '}' -> bs <$ addText "}"
@@ -521,11 +524,14 @@ emitPar bs = do
   updateState $ \s -> s{ sTextContent = [] }
   let justCode = def{ gFontFamily = Just Modern }
   return $ bs <>
-    if null annotatedToks
-       then mempty
-       else if all ((== justCode) . fst) annotatedToks
-            then B.codeBlock (mconcat $ map snd annotatedToks)
-            else B.para $ B.trimInlines . mconcat
+    case annotatedToks of
+      [] -> mempty
+      ((prop,_):_) | Just lvl <- gOutlineLevel prop
+         -> B.header (lvl + 1) $ B.trimInlines . mconcat
+                         $ map addFormatting annotatedToks
+      _ | all ((== justCode) . fst) annotatedToks
+         -> B.codeBlock (mconcat $ map snd annotatedToks)
+        | otherwise -> B.para $ B.trimInlines . mconcat
                         $ map addFormatting annotatedToks
 
 -- {\field{\*\fldinst{HYPERLINK "http://pandoc.org"}}{\fldrslt foo}}
