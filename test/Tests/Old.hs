@@ -215,7 +215,7 @@ tests pandocPath =
                              ("rtf/" <> s <> ".rtf")
                              ("rtf/" <> s <> ".native")
        in map rtfReaderTest ["footnote", "accent", "unicode", "image", "link",
-                             "heading"]
+                             "heading", "formatting"]
     , testGroup "writer" $ writerTests' "rtf"
     ]
   , testGroup "ipynb"
