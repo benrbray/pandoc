@@ -42,7 +42,9 @@ import Debug.Trace
 TODO:
 - lists
 - tables
-- block quotes
+- bookmarks
+- block quotes?
+- hrules?
 -}
 
 -- | Read RTF from an input string and return a Pandoc document.
