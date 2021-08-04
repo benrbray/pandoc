@@ -210,10 +210,11 @@ tests pandocPath =
     , testGroup "writer" $ writerTests' "org"
     ]
   , testGroup "rtf"
-    [ testGroup "reader"
-      [ test' "footnote" ["-r", "rtf", "-w", "native", "-s"]
-          "rtf/footnote.rtf" "rtf/footnote.native"
-      ]
+    [ testGroup "reader" $
+      let rtfReaderTest s = test' s ["-f", "rtf", "-t", "native", "-s"]
+                             ("rtf/" <> s <> ".rtf")
+                             ("rtf/" <> s <> ".native")
+       in map rtfReaderTest ["footnote", "accent"]
     , testGroup "writer" $ writerTests' "rtf"
     ]
   , testGroup "ipynb"
