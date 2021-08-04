@@ -356,7 +356,8 @@ processTok bs (Tok pos tok') = do
                 Grouped (Tok _ (ControlSymbol '*') : toks) -> Grouped toks
                 _ -> tok'
   case tok'' of
-    HexVal _ -> return ()
+    HexVal{} -> return ()
+    UnformattedText{} -> return ()
     _ -> updateState $ \s -> s{ sEatChars = 0 }
   case tok'' of
     Grouped (Tok _ (ControlWord "fonttbl" _) : toks) -> inGroup $ do
@@ -402,7 +403,15 @@ processTok bs (Tok pos tok') = do
       updateState $ \s -> s{ sMetadata = (f, ils) : sMetadata s }
       pure bs
     Grouped toks -> inGroup (foldM processTok bs toks)
-    UnformattedText t -> bs <$ addText t
+    UnformattedText t -> bs <$ do
+      eatChars <- sEatChars <$> getState
+      case eatChars of
+        0 -> addText t
+        n | n < T.length t -> do
+             updateState $ \s -> s{ sEatChars = 0 }
+             addText (T.drop n t)
+          | otherwise -> do
+             updateState $ \s -> s{ sEatChars = n - T.length t }
     HexVal n -> bs <$ do
       eatChars <- sEatChars <$> getState
       if eatChars == 0
