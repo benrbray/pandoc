@@ -40,7 +40,6 @@ import Debug.Trace
 
 {-
 TODO:
-- footnotes
 - lists
 - tables
 - block quotes
@@ -144,6 +143,7 @@ data Properties =
   , gFontFamily :: Maybe FontFamily
   , gHidden :: Bool
   , gUC :: Int -- number of ansi chars to skip after unicode char
+  , gFootnote :: Maybe Blocks
   } deriving (Show, Eq)
 
 instance Default Properties where
@@ -160,6 +160,7 @@ instance Default Properties where
                     , gFontFamily = Nothing
                     , gHidden = False
                     , gUC = 1
+                    , gFootnote = Nothing
                     }
 
 type RTFParser m = ParserT Sources RTFState m
@@ -238,6 +239,7 @@ modifyGroup f =
 addFormatting :: (Properties, Text) -> Inlines
 addFormatting (_, "\n") = B.linebreak
 addFormatting (props, _) | gHidden props = mempty
+addFormatting (props, _) | Just bs <- gFootnote props = B.note bs
 addFormatting (props, txt) =
   (if gBold props then B.strong else id) .
   (if gItalic props then B.emph else id) .
@@ -383,12 +385,15 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "bkmkstart" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord "bkmkend" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord f _) : _) | isHeaderFooter f -> pure bs
+    Grouped (Tok _ (ControlWord "footnote" _) : toks) -> do
+      noteBs <- inGroup $ processDestinationToks toks
+      modifyGroup (\g -> g{ gFootnote = Just noteBs })
+      addText "*"
+      modifyGroup (\g -> g{ gFootnote = Nothing })
+      return bs
     Grouped (Tok _ (ControlWord "info" _) : toks) -> inGroup $ do
-      -- don't allow anything in here to go into a regular body paragraph
-      textContent <- sTextContent <$> getState
-      result <- inGroup $ foldM processTok bs toks
-      updateState $ \s -> s{ sTextContent = textContent }
-      return result
+      _ <- inGroup $ processDestinationToks toks
+      return bs
     Grouped (Tok _ (ControlWord f _) : toks) | isMetadataField f -> inGroup $ do
       _ <- foldM processTok mempty toks
       annotatedToks <- reverse . sTextContent <$> getState
@@ -492,6 +497,14 @@ processTok bs (Tok pos tok') = do
       getStyleFormatting 0 >>= foldM processTok bs
     ControlWord "par" _ -> emitPar bs
     _ -> pure bs
+
+processDestinationToks :: PandocMonad m => [Tok] -> RTFParser m Blocks
+processDestinationToks toks = do
+      textContent <- sTextContent <$> getState
+      updateState $ \s -> s{ sTextContent = mempty }
+      result <- inGroup $ foldM processTok mempty toks >>= emitPar
+      updateState $ \s -> s{ sTextContent = textContent }
+      return result
 
 emitPar :: PandocMonad m => Blocks -> RTFParser m Blocks
 emitPar bs = do
