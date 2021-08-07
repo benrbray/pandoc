@@ -34,7 +34,7 @@ import Text.Pandoc.Shared (safeRead, tshow)
 import Data.Char (isAlphaNum, chr, digitToInt, isAscii, isLetter)
 import qualified Data.ByteString.Lazy as BL
 import Data.Digest.Pure.SHA (sha1, showDigest)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, fromMaybe)
 import Safe (lastMay, initSafe)
 import Debug.Trace
 
@@ -65,6 +65,7 @@ data CharSet = ANSI | Mac | Pc | Pca
 data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sCharSet     :: CharSet
                           , sGroupStack  :: [Properties]
+                          , sContainerStack :: [Container]
                           , sTextContent :: [(Properties, Text)]
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
@@ -76,6 +77,7 @@ instance Default RTFState where
  def = RTFState { sOptions = def
                 , sCharSet = ANSI
                 , sGroupStack = []
+                , sContainerStack = []
                 , sTextContent = []
                 , sMetadata = []
                 , sFontTable = mempty
@@ -146,6 +148,8 @@ data Properties =
   , gUC :: Int -- number of ansi chars to skip after unicode char
   , gFootnote :: Maybe Blocks
   , gOutlineLevel :: Maybe Int
+  , gListOverride :: Maybe Override
+  , gListLevel :: Maybe Int
   } deriving (Show, Eq)
 
 instance Default Properties where
@@ -164,10 +168,21 @@ instance Default Properties where
                     , gUC = 1
                     , gFootnote = Nothing
                     , gOutlineLevel = Nothing
+                    , gListOverride = Nothing
+                    , gListLevel = Nothing
                     }
 
 type RTFParser m = ParserT Sources RTFState m
 
+data ListType = Bullet | Ordered ListAttributes
+  deriving (Show, Eq)
+
+newtype Override = Override Int
+  deriving (Show, Eq)
+
+data Container =
+    List Override Int ListType [Blocks]  -- items in reverse order
+    deriving (Show, Eq)
 
 parseRTF :: PandocMonad m => RTFParser m Pandoc
 parseRTF = do
@@ -436,6 +451,10 @@ processTok bs (Tok pos tok') = do
       updateState (\s -> s{ sCharSet = Pca })
     ControlWord "outlinelevel" mbp -> bs <$
       modifyGroup (\g -> g{ gOutlineLevel = mbp })
+    ControlWord "ls" mbp -> bs <$
+      modifyGroup (\g -> g{ gListOverride = Override <$> mbp })
+    ControlWord "ilvl" mbp -> bs <$
+      modifyGroup (\g -> g{ gListLevel = mbp })
     ControlSymbol '\\' -> bs <$ addText "\\"
     ControlSymbol '{' -> bs <$ addText "{"
     ControlSymbol '}' -> bs <$ addText "}"
@@ -520,21 +539,53 @@ processDestinationToks toks = do
       updateState $ \s -> s{ sTextContent = textContent }
       return result
 
+closeList :: PandocMonad m => RTFParser m Blocks
+closeList  = undefined
+
 emitPar :: PandocMonad m => Blocks -> RTFParser m Blocks
 emitPar bs = do
   annotatedToks <- reverse . sTextContent <$> getState
   updateState $ \s -> s{ sTextContent = [] }
   let justCode = def{ gFontFamily = Just Modern }
-  return $ bs <>
-    case annotatedToks of
-      [] -> mempty
+  case annotatedToks of
+      [] -> pure bs
+      ((prop,_):_) | Just lst <- gListOverride prop
+         -> do
+           let level = fromMaybe 1 $ gListLevel prop
+           containers <- sContainerStack <$> getState
+           modifyGroup $ \g -> g{ gListOverride = Nothing }
+           -- get para contents of list item
+           let newbs = B.para . B.trimInlines . mconcat $
+                        map addFormatting annotatedToks
+           case containers of
+             (List lo level' lt items : cs)
+               | lo == lst
+               , lt == Bullet
+               , level' == level
+               -- add another item to existing list
+               -> updateState $ \s ->
+                    s{ sContainerStack =
+                         List lo level' Bullet (newbs:items) : cs }
+               |  level' > level
+               -- close lists and add new list
+               -> updateState $ \s ->
+                   s{ sContainerStack = undefined } -- TODO
+               -- add new list
+             _ -> updateState $ \s ->
+                    s{ sContainerStack = List lst level Bullet [newbs] :
+                         sContainerStack s }
+           pure bs
+
+
       ((prop,_):_) | Just lvl <- gOutlineLevel prop
-         -> B.header (lvl + 1) $ B.trimInlines . mconcat
-                         $ map addFormatting annotatedToks
+         -> pure $ bs <>
+              B.header (lvl + 1)
+               (B.trimInlines . mconcat $ map addFormatting annotatedToks)
       _ | all ((== justCode) . fst) annotatedToks
-         -> B.codeBlock (mconcat $ map snd annotatedToks)
-        | otherwise -> B.para $ B.trimInlines . mconcat
-                        $ map addFormatting annotatedToks
+         -> pure $ bs <> B.codeBlock (mconcat $ map snd annotatedToks)
+        | otherwise -> pure $
+            bs <> B.para
+                  (B.trimInlines . mconcat $ map addFormatting annotatedToks)
 
 -- {\field{\*\fldinst{HYPERLINK "http://pandoc.org"}}{\fldrslt foo}}
 handleField :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
