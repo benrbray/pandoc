@@ -565,9 +565,13 @@ emitBlocks bs = do
   annotatedToks <- reverse . sTextContent <$> getState
   updateState $ \s -> s{ sTextContent = [] }
   let justCode = def{ gFontFamily = Just Modern }
+  groups <- sGroupStack <$> getState
+  let prop = case groups of
+               [] -> def
+               (g:_) -> g
   case annotatedToks of
       [] -> pure bs
-      ((prop,_):_) | Just lst <- gListOverride prop
+      _ | Just lst <- gListOverride prop
          -> do
            let level = fromMaybe 0 $ gListLevel prop
            containers <- sContainerStack <$> getState
@@ -597,13 +601,13 @@ emitBlocks bs = do
                          sContainerStack s }
                   pure bs
 
-      ((prop,_):_) | Just lvl <- gOutlineLevel prop
+        | Just lvl <- gOutlineLevel prop
          -> do
             lists <- closeLists 0
             pure $ bs <> lists <>
                    B.header (lvl + 1)
                    (B.trimInlines . mconcat $ map addFormatting annotatedToks)
-      _ | all ((== justCode) . fst) annotatedToks
+        | all ((== justCode) . fst) annotatedToks
          -> do
             lists <- closeLists 0
             pure $ bs <> lists <>
