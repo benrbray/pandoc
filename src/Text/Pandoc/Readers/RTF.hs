@@ -149,7 +149,6 @@ data Properties =
   , gOutlineLevel :: Maybe Int
   , gListOverride :: Maybe Override
   , gListLevel :: Maybe Int
-  , gListContinuation :: Bool
   } deriving (Show, Eq)
 
 instance Default Properties where
@@ -170,7 +169,6 @@ instance Default Properties where
                     , gOutlineLevel = Nothing
                     , gListOverride = Nothing
                     , gListLevel = Nothing
-                    , gListContinuation = False
                     }
 
 type RTFParser m = ParserT Sources RTFState m
@@ -390,12 +388,7 @@ processTok bs (Tok pos tok') = do
       inGroup $ handlePict bs toks
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       inGroup $ handleStylesheet bs toks
-    Grouped (Tok _ (ControlWord "listtext" _) : toks) -> do
-      case toks of
-        [Tok _ (UnformattedText t)] | T.all isSpace t ->
-          modifyGroup $ \g -> g{ gListContinuation = True }
-        _ -> return ()
-      pure bs
+    Grouped (Tok _ (ControlWord "listtext" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
       bs <$ inGroup (processDestinationToks toks)
@@ -576,7 +569,7 @@ emitBlocks bs = do
       [] -> pure bs
       ((prop,_):_) | Just lst <- gListOverride prop
          -> do
-           let level = fromMaybe 1 $ gListLevel prop
+           let level = fromMaybe 0 $ gListLevel prop
            containers <- sContainerStack <$> getState
            modifyGroup $ \g -> g{ gListOverride = Nothing }
            -- get para contents of list item
@@ -587,17 +580,9 @@ emitBlocks bs = do
                | lo == lst
                , parentlevel == level
                -- add another item to existing list
-               -> do let isContinuation =
-                            any (\(p,_) -> gListContinuation p) annotatedToks
-                     let newItems =
-                           if isContinuation
-                              then case items of
-                                     [] -> [newbs]
-                                     (i:is) -> i <> newbs : is
-                              else newbs:items
-                     updateState $ \s ->
+               -> do updateState $ \s ->
                         s{ sContainerStack =
-                             List lo level Bullet newItems : cs }
+                             List lo level Bullet (newbs:items) : cs }
                      pure bs
                | lo /= lst || level < parentlevel
                -- close parent list and add new list
