@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE TupleSections     #-}
 {-# LANGUAGE OverloadedStrings #-}
 {- |
    Module      : Text.Pandoc.Readers.RTF
@@ -189,9 +188,11 @@ parseRTF = do
   skipMany nl
   toks <- many tok
   -- return $! traceShowId toks
-  doc <- B.doc <$> (foldM processTok mempty toks >>= emitPar)
+  bs <- (foldM processTok mempty toks >>= emitBlocks)
+  unclosed <- closeLists 0
+  let doc = B.doc $ bs <> unclosed
   kvs <- sMetadata <$> getState
-  pure $ foldr (\(k,v) -> B.setMeta k v) doc kvs
+  pure $ foldr (uncurry B.setMeta) doc kvs
 
 data Tok = Tok SourcePos TokContents
   deriving (Show, Eq)
@@ -387,7 +388,10 @@ processTok bs (Tok pos tok') = do
       inGroup $ handlePict bs toks
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       inGroup $ handleStylesheet bs toks
+    Grouped (Tok _ (ControlWord "listtext" _) : _) -> pure bs -- TODO?
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
+      bs <$ inGroup (processDestinationToks toks)
     Grouped (Tok _ (ControlWord "listtable" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "themedata" _) : _) -> pure bs
@@ -410,11 +414,10 @@ processTok bs (Tok pos tok') = do
       addText "*"
       modifyGroup (\g -> g{ gFootnote = Nothing })
       return bs
-    Grouped (Tok _ (ControlWord "info" _) : toks) -> inGroup $ do
-      _ <- inGroup $ processDestinationToks toks
-      return bs
+    Grouped (Tok _ (ControlWord "info" _) : toks) ->
+      bs <$ inGroup (processDestinationToks toks)
     Grouped (Tok _ (ControlWord f _) : toks) | isMetadataField f -> inGroup $ do
-      _ <- foldM processTok mempty toks
+      foldM_ processTok mempty toks
       annotatedToks <- reverse . sTextContent <$> getState
       updateState $ \s -> s{ sTextContent = [] }
       let ils = B.trimInlines . mconcat $ map addFormatting annotatedToks
@@ -422,6 +425,7 @@ processTok bs (Tok pos tok') = do
       pure bs
     Grouped toks -> inGroup (foldM processTok bs toks)
     UnformattedText t -> bs <$ do
+      -- return $! traceShowId $! (pos, t)
       eatChars <- sEatChars <$> getState
       case eatChars of
         0 -> addText t
@@ -528,22 +532,36 @@ processTok bs (Tok pos tok') = do
     ControlWord "pard" _ -> bs <$ do
       modifyGroup (const def)
       getStyleFormatting 0 >>= foldM processTok bs
-    ControlWord "par" _ -> emitPar bs
+    ControlWord "par" _ -> emitBlocks bs
     _ -> pure bs
 
 processDestinationToks :: PandocMonad m => [Tok] -> RTFParser m Blocks
 processDestinationToks toks = do
-      textContent <- sTextContent <$> getState
-      updateState $ \s -> s{ sTextContent = mempty }
-      result <- inGroup $ foldM processTok mempty toks >>= emitPar
-      updateState $ \s -> s{ sTextContent = textContent }
-      return result
+  textContent <- sTextContent <$> getState
+  containerStack <- sContainerStack <$> getState
+  updateState $ \s -> s{ sTextContent = mempty
+                       , sContainerStack = [] }
+  result <- inGroup $
+              foldM processTok mempty toks >>= emitBlocks
+  unclosed <- closeLists 0
+  updateState $ \s -> s{ sTextContent = textContent
+                       , sContainerStack = containerStack }
+  return $ result <> unclosed
 
-closeList :: PandocMonad m => RTFParser m Blocks
-closeList  = undefined
+-- close lists >= level
+closeLists :: PandocMonad m => Int -> RTFParser m Blocks
+closeLists lvl = do
+  containers <- sContainerStack <$> getState
+  case containers of
+    (List _ lvl' lt items : rest) | lvl' >= lvl -> do
+      let newlist = B.bulletList $ reverse items
+      updateState $ \s -> s{ sContainerStack = rest }
+      (<> newlist) <$> closeLists lvl
+    _ -> pure mempty
 
-emitPar :: PandocMonad m => Blocks -> RTFParser m Blocks
-emitPar bs = do
+
+emitBlocks :: PandocMonad m => Blocks -> RTFParser m Blocks
+emitBlocks bs = do
   annotatedToks <- reverse . sTextContent <$> getState
   updateState $ \s -> s{ sTextContent = [] }
   let justCode = def{ gFontFamily = Just Modern }
@@ -558,34 +576,42 @@ emitPar bs = do
            let newbs = B.para . B.trimInlines . mconcat $
                         map addFormatting annotatedToks
            case containers of
-             (List lo level' lt items : cs)
+             (List lo parentlevel lt items : cs)
                | lo == lst
-               , lt == Bullet
-               , level' == level
+               , parentlevel == level
                -- add another item to existing list
-               -> updateState $ \s ->
-                    s{ sContainerStack =
-                         List lo level' Bullet (newbs:items) : cs }
-               |  level' > level
-               -- close lists and add new list
-               -> updateState $ \s ->
-                   s{ sContainerStack = undefined } -- TODO
-               -- add new list
-             _ -> updateState $ \s ->
+               -> do updateState $ \s ->
+                        s{ sContainerStack =
+                             List lo level Bullet (newbs:items) : cs }
+                     pure bs
+               | lo /= lst || level < parentlevel
+               -- close parent list and add new list
+               -> do new <- closeLists level  -- close open lists > level
+                     updateState $ \s ->
+                       s{ sContainerStack = List lst level Bullet [newbs] :
+                           sContainerStack s }
+                     pure $ bs <> new
+             _ -> do -- add new list (level > parentlevel)
+                  updateState $ \s ->
                     s{ sContainerStack = List lst level Bullet [newbs] :
                          sContainerStack s }
-           pure bs
-
+                  pure bs
 
       ((prop,_):_) | Just lvl <- gOutlineLevel prop
-         -> pure $ bs <>
-              B.header (lvl + 1)
-               (B.trimInlines . mconcat $ map addFormatting annotatedToks)
+         -> do
+            lists <- closeLists 0
+            pure $ bs <> lists <>
+                   B.header (lvl + 1)
+                   (B.trimInlines . mconcat $ map addFormatting annotatedToks)
       _ | all ((== justCode) . fst) annotatedToks
-         -> pure $ bs <> B.codeBlock (mconcat $ map snd annotatedToks)
-        | otherwise -> pure $
-            bs <> B.para
-                  (B.trimInlines . mconcat $ map addFormatting annotatedToks)
+         -> do
+            lists <- closeLists 0
+            pure $ bs <> lists <>
+                    B.codeBlock (mconcat $ map snd annotatedToks)
+        | otherwise -> do
+            lists <- closeLists 0
+            pure $ bs <> lists <>
+              B.para (B.trimInlines . mconcat $ map addFormatting annotatedToks)
 
 -- {\field{\*\fldinst{HYPERLINK "http://pandoc.org"}}{\fldrslt foo}}
 handleField :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
