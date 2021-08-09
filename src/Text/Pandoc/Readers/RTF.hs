@@ -675,9 +675,11 @@ removeCommonFormatting =
 handleField :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
 handleField bs
   (Tok _
-    (Grouped [Tok _ (ControlSymbol '*')
-     ,Tok _ (ControlWord "fldinst" Nothing)
-     ,Tok _ (Grouped [Tok _ (UnformattedText insttext)])])
+    (Grouped
+     (Tok _ (ControlSymbol '*')
+     :Tok _ (ControlWord "fldinst" Nothing)
+     :Tok _ (Grouped [Tok _ (UnformattedText insttext)])
+     :_))
   :linktoks)
   | Just linkdest <- getHyperlink insttext
     = do modifyGroup $ \g -> g{ gHyperlink = Just linkdest }
@@ -828,7 +830,7 @@ handlePict bs toks = do
 
 getHyperlink :: Text -> Maybe Text
 getHyperlink t =
-  case traceShowId $ T.stripPrefix "HYPERLINK " (T.strip t) of
+  case T.stripPrefix "HYPERLINK " (T.strip t) of
     Nothing -> Nothing
     Just rest -> Just . T.dropWhile (=='"') . T.dropWhileEnd (=='"')
                       $ T.strip rest
