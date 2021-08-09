@@ -401,7 +401,10 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
       bs <$ inGroup (processDestinationToks toks)
-    Grouped (Tok _ (ControlWord "listtable" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "listtable" _) : toks) ->
+      inGroup $ handleListTable bs toks
+    Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
+      inGroup $ handleListOverrideTable bs toks
     Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "themedata" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "colorschememapping" _) : _) -> pure bs
@@ -659,6 +662,17 @@ handleField bs
          modifyGroup $ \g -> g{ gHyperlink = Nothing }
          return result
 handleField bs _ = pure bs
+
+handleListTable :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
+handleListTable bs toks = do
+  -- TODO
+  pure bs
+
+handleListOverrideTable :: PandocMonad m
+                        => Blocks -> [Tok] -> RTFParser m Blocks
+handleListOverrideTable bs toks = do
+  -- TODO
+  pure bs
 
 handleStylesheet :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
 handleStylesheet bs toks = do
