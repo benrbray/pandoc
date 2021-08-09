@@ -36,7 +36,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Digest.Pure.SHA (sha1, showDigest)
 import Data.Maybe (mapMaybe, fromMaybe)
 import Safe (lastMay, initSafe, headDef)
--- import Debug.Trace
+import Debug.Trace
 
 {-
 TODO:
@@ -678,15 +678,24 @@ handleField bs
     (Grouped
      (Tok _ (ControlSymbol '*')
      :Tok _ (ControlWord "fldinst" Nothing)
-     :Tok _ (Grouped [Tok _ (UnformattedText insttext)])
+     :Tok _ (Grouped (Tok _ (UnformattedText insttext):rest))
      :_))
   :linktoks)
   | Just linkdest <- getHyperlink insttext
-    = do modifyGroup $ \g -> g{ gHyperlink = Just linkdest }
-         result <- foldM processTok bs linktoks
-         modifyGroup $ \g -> g{ gHyperlink = Nothing }
-         return result
+  = do let linkdest' = case rest of
+                         (Tok _ (ControlSymbol '\\')
+                          : Tok _ (UnformattedText t)
+                          : _) | Just bkmrk <- T.stripPrefix "l" t
+                           -> "#" <> unquote bkmrk
+                         _ -> linkdest
+       modifyGroup $ \g -> g{ gHyperlink = Just linkdest' }
+       result <- foldM processTok bs linktoks
+       modifyGroup $ \g -> g{ gHyperlink = Nothing }
+       return result
 handleField bs _ = pure bs
+
+unquote :: Text -> Text
+unquote = T.dropWhile (=='"') . T.dropWhileEnd (=='"') . T.strip
 
 handleListTable :: PandocMonad m => [Tok] -> RTFParser m ()
 handleListTable toks = do
@@ -827,13 +836,11 @@ handlePict bs toks = do
       _ -> pict
 
 
-
 getHyperlink :: Text -> Maybe Text
 getHyperlink t =
-  case T.stripPrefix "HYPERLINK " (T.strip t) of
+  case T.stripPrefix "HYPERLINK" (T.strip t) of
     Nothing -> Nothing
-    Just rest -> Just . T.dropWhile (=='"') . T.dropWhileEnd (=='"')
-                      $ T.strip rest
+    Just rest -> Just $ unquote rest
 
 processFontTable :: [Tok] -> FontTable
 processFontTable = snd . foldl' go (0, mempty)
