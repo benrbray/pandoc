@@ -15,6 +15,7 @@ We target version 1.5 of the RTF spec.
 module Text.Pandoc.Readers.RTF (readRTF) where
 
 import qualified Data.IntMap as IntMap
+import qualified Data.Sequence as Seq
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Data.List (find, foldl')
@@ -388,7 +389,10 @@ processTok bs (Tok pos tok') = do
       inGroup $ handlePict bs toks
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       inGroup $ handleStylesheet bs toks
-    Grouped (Tok _ (ControlWord "listtext" _) : _) -> pure bs
+    Grouped (Tok _ (ControlWord "listtext" _) : _) -> do
+      -- eject any previous list items...sometimes TextEdit
+      -- doesn't put in a \par
+      emitBlocks bs
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
       bs <$ inGroup (processDestinationToks toks)
@@ -530,7 +534,6 @@ processTok bs (Tok pos tok') = do
     ControlWord "ulnone" _ -> bs <$
       modifyGroup (\g -> g{ gUnderline = False })
     ControlWord "pard" _ -> bs <$ do
-      modifyGroup (const def)
       getStyleFormatting 0 >>= foldM processTok bs
     ControlWord "par" _ -> emitBlocks bs
     _ -> pure bs
@@ -556,9 +559,26 @@ closeLists lvl = do
     (List _ lvl' lt items : rest) | lvl' >= lvl -> do
       let newlist = B.bulletList $ reverse items
       updateState $ \s -> s{ sContainerStack = rest }
-      (<> newlist) <$> closeLists lvl
+      case rest of
+        [] -> do
+          updateState $ \s -> s{ sContainerStack = rest }
+          pure newlist
+        (List lo lvl'' lt' [] : rest') -> do -- should not happen
+          updateState $ \s -> s{ sContainerStack =
+               List lo lvl'' lt' [newlist] : rest' }
+          closeLists lvl
+        (List lo lvl'' lt' (i:is) : rest') -> do
+          updateState $ \s -> s{ sContainerStack =
+               List lo lvl'' lt' (i <> newlist : is) : rest' }
+          closeLists lvl
     _ -> pure mempty
 
+
+trimFinalLineBreak :: Inlines -> Inlines
+trimFinalLineBreak ils =
+  case Seq.viewr (B.unMany ils) of
+    rest Seq.:> LineBreak -> B.Many rest
+    _ -> ils
 
 emitBlocks :: PandocMonad m => Blocks -> RTFParser m Blocks
 emitBlocks bs = do
@@ -566,18 +586,17 @@ emitBlocks bs = do
   updateState $ \s -> s{ sTextContent = [] }
   let justCode = def{ gFontFamily = Just Modern }
   groups <- sGroupStack <$> getState
-  let prop = case groups of
+  let prop = case annotatedToks of
                [] -> def
-               (g:_) -> g
+               ((p,_):_) -> p
   case annotatedToks of
       [] -> pure bs
       _ | Just lst <- gListOverride prop
          -> do
            let level = fromMaybe 0 $ gListLevel prop
            containers <- sContainerStack <$> getState
-           modifyGroup $ \g -> g{ gListOverride = Nothing }
            -- get para contents of list item
-           let newbs = B.para . B.trimInlines . mconcat $
+           let newbs = B.para . B.trimInlines . trimFinalLineBreak . mconcat $
                         map addFormatting annotatedToks
            case containers of
              (List lo parentlevel lt items : cs)
@@ -612,10 +631,15 @@ emitBlocks bs = do
             lists <- closeLists 0
             pure $ bs <> lists <>
                     B.codeBlock (mconcat $ map snd annotatedToks)
+        | all (T.all isSpace . snd) annotatedToks
+         -> do
+            lists <- closeLists 0
+            pure bs
         | otherwise -> do
             lists <- closeLists 0
             pure $ bs <> lists <>
-              B.para (B.trimInlines . mconcat $ map addFormatting annotatedToks)
+              B.para (B.trimInlines . trimFinalLineBreak . mconcat
+                $ map addFormatting annotatedToks)
 
 -- {\field{\*\fldinst{HYPERLINK "http://pandoc.org"}}{\fldrslt foo}}
 handleField :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
