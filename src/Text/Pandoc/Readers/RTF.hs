@@ -567,7 +567,10 @@ closeLists lvl = do
   containers <- sContainerStack <$> getState
   case containers of
     (List _ lvl' lt items : rest) | lvl' >= lvl -> do
-      let newlist = B.bulletList $ reverse items
+      let newlist = (case lt of
+                      Bullet -> B.bulletList
+                      Ordered listAttr -> B.orderedListWith listAttr)
+                    (reverse items)
       updateState $ \s -> s{ sContainerStack = rest }
       case rest of
         [] -> do
@@ -611,7 +614,7 @@ emitBlocks bs = do
            let newbs = B.para . B.trimInlines . trimFinalLineBreak . mconcat $
                         map addFormatting annotatedToks
            case containers of
-             (List lo parentlevel lt items : cs)
+             (List lo parentlevel _lt items : cs)
                | lo == lst
                , parentlevel == level
                -- add another item to existing list
@@ -705,11 +708,7 @@ handleListLevel levelTable (lvl, toks) = do
   return $ IntMap.insert lvl listType levelTable
 
 handleListOverrideTable :: PandocMonad m => [Tok] -> RTFParser m ()
-handleListOverrideTable toks = do
-  mapM_ handleListOverride toks
-  listOverrideTable <- sListOverrideTable <$> getState
-  return $! traceShowId $! listOverrideTable
-  return ()
+handleListOverrideTable toks = mapM_ handleListOverride toks
 
 handleListOverride :: PandocMonad m => Tok -> RTFParser m ()
 handleListOverride
