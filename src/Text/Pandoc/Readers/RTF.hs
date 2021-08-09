@@ -35,7 +35,7 @@ import Data.Char (isAlphaNum, chr, digitToInt, isAscii, isLetter, isSpace)
 import qualified Data.ByteString.Lazy as BL
 import Data.Digest.Pure.SHA (sha1, showDigest)
 import Data.Maybe (mapMaybe, fromMaybe)
-import Safe (lastMay, initSafe)
+import Safe (lastMay, initSafe, headDef)
 import Debug.Trace
 
 {-
@@ -62,6 +62,10 @@ readRTF opts s = do
 data CharSet = ANSI | Mac | Pc | Pca
   deriving (Show, Eq)
 
+-- first index is the list (or override) id, second is the list level
+type ListTable = IntMap.IntMap ListLevelTable
+type ListLevelTable = IntMap.IntMap ListType
+
 data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sCharSet     :: CharSet
                           , sGroupStack  :: [Properties]
@@ -70,8 +74,8 @@ data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
                           , sStylesheet  :: Stylesheet
-                          , sListTable   :: IntMap.IntMap ListAttributes
-                          , sListOverrideTable :: IntMap.IntMap ListAttributes
+                          , sListTable   :: ListTable
+                          , sListOverrideTable :: ListTable
                           , sEatChars    :: Int
                           } deriving (Show)
 
@@ -399,8 +403,6 @@ processTok bs (Tok pos tok') = do
       -- doesn't put in a \par
       emitBlocks bs
     Grouped (Tok _ (ControlWord "colortbl" _) : _) -> pure bs
-    Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
-      bs <$ inGroup (processDestinationToks toks)
     Grouped (Tok _ (ControlWord "listtable" _) : toks) ->
       bs <$ inGroup (handleListTable toks)
     Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
@@ -601,6 +603,9 @@ emitBlocks bs = do
       _ | Just lst <- gListOverride prop
          -> do
            let level = fromMaybe 0 $ gListLevel prop
+           listOverrideTable <- sListOverrideTable <$> getState
+           let listType = fromMaybe Bullet $
+                 IntMap.lookup lst listOverrideTable >>= IntMap.lookup level
            containers <- sContainerStack <$> getState
            -- get para contents of list item
            let newbs = B.para . B.trimInlines . trimFinalLineBreak . mconcat $
@@ -612,18 +617,18 @@ emitBlocks bs = do
                -- add another item to existing list
                -> do updateState $ \s ->
                         s{ sContainerStack =
-                             List lo level Bullet (newbs:items) : cs }
+                             List lo level listType (newbs:items) : cs }
                      pure bs
                | lo /= lst || level < parentlevel
                -- close parent list and add new list
                -> do new <- closeLists level  -- close open lists > level
                      updateState $ \s ->
-                       s{ sContainerStack = List lst level Bullet [newbs] :
+                       s{ sContainerStack = List lst level listType [newbs] :
                            sContainerStack s }
                      pure $ bs <> new
              _ -> do -- add new list (level > parentlevel)
                   updateState $ \s ->
-                    s{ sContainerStack = List lst level Bullet [newbs] :
+                    s{ sContainerStack = List lst level listType [newbs] :
                          sContainerStack s }
                   pure bs
 
@@ -664,17 +669,61 @@ handleField bs
 handleField bs _ = pure bs
 
 handleListTable :: PandocMonad m => [Tok] -> RTFParser m ()
-handleListTable toks = mapM_ handleList toks
+handleListTable toks = do
+  mapM_ handleList toks
 
 handleList :: PandocMonad m => Tok -> RTFParser m ()
 handleList (Tok _ (Grouped (Tok _ (ControlWord "list" _) : toks))) = do
-  undefined -- TODO
+  let listid = headDef 0 [n | Tok _ (ControlWord "listid" (Just n)) <- toks]
+  let levels = [ts | Tok _ (Grouped (Tok _ (ControlWord "listlevel" _) : ts))
+                 <- toks]
+  tbl <- foldM handleListLevel mempty (zip [0..] levels)
+  updateState $ \s -> s{ sListTable = IntMap.insert listid tbl $ sListTable s }
 handleList _ = return ()
+
+handleListLevel :: PandocMonad m
+                => ListLevelTable
+                -> (Int, [Tok])
+                -> RTFParser m ListLevelTable
+handleListLevel levelTable (lvl, toks) = do
+  let start = headDef 1
+                [n | Tok _ (ControlWord "levelstartat" (Just n)) <- toks]
+  let mbNumberStyle =
+        case [n | Tok _ (ControlWord "levelnfc" (Just n)) <- toks] of
+          [] -> Nothing
+          (0:_) -> Just Decimal
+          (1:_) -> Just UpperRoman
+          (2:_) -> Just LowerRoman
+          (3:_) -> Just UpperAlpha
+          (4:_) -> Just LowerAlpha
+          (23:_) -> Nothing
+          (255:_) -> Nothing
+          _ -> Just DefaultStyle
+  let listType = case mbNumberStyle of
+                   Nothing -> Bullet
+                   Just numStyle -> Ordered (start,numStyle,Period)
+  return $ IntMap.insert lvl listType levelTable
 
 handleListOverrideTable :: PandocMonad m => [Tok] -> RTFParser m ()
 handleListOverrideTable toks = do
-  -- TODO
+  mapM_ handleListOverride toks
+  listOverrideTable <- sListOverrideTable <$> getState
+  return $! traceShowId $! listOverrideTable
   return ()
+
+handleListOverride :: PandocMonad m => Tok -> RTFParser m ()
+handleListOverride
+ (Tok _ (Grouped (Tok _ (ControlWord "listoverride" _) : toks))) = do
+  let listid = headDef 0 [n | Tok _ (ControlWord "listid" (Just n)) <- toks]
+  let lsn = headDef 0 [n | Tok _ (ControlWord "ls" (Just n)) <- toks]
+  -- TODO override stuff, esp. start num -- for now we just handle indirection
+  listTable <- sListTable <$> getState
+  case IntMap.lookup listid listTable of
+    Nothing -> return ()
+    Just tbl -> updateState $ \s ->
+                   s{ sListOverrideTable = IntMap.insert lsn tbl $
+                        sListOverrideTable s }
+handleListOverride _ = return ()
 
 handleStylesheet :: PandocMonad m => [Tok] -> RTFParser m ()
 handleStylesheet toks = do
