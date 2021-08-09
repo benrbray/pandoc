@@ -828,9 +828,10 @@ handlePict bs toks = do
 
 getHyperlink :: Text -> Maybe Text
 getHyperlink t =
-  case T.stripPrefix "HYPERLINK " t of
+  case traceShowId $ T.stripPrefix "HYPERLINK " (T.strip t) of
     Nothing -> Nothing
-    Just rest -> Just $ T.drop 1 $ T.dropEnd 1 rest -- strip " from beg and end
+    Just rest -> Just . T.dropWhile (=='"') . T.dropWhileEnd (=='"')
+                      $ T.strip rest
 
 processFontTable :: [Tok] -> FontTable
 processFontTable = snd . foldl' go (0, mempty)
