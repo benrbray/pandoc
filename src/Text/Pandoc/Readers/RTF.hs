@@ -40,11 +40,8 @@ import Safe (lastMay, initSafe, headDef)
 
 {-
 TODO:
-- lists
 - tables
 - bookmarks
-- block quotes?
-- hrules?
 -}
 
 -- | Read RTF from an input string and return a Pandoc document.
