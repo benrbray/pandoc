@@ -36,7 +36,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Digest.Pure.SHA (sha1, showDigest)
 import Data.Maybe (mapMaybe, fromMaybe)
 import Safe (lastMay, initSafe, headDef)
-import Debug.Trace
+-- import Debug.Trace
 
 {-
 TODO:
