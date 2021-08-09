@@ -41,7 +41,6 @@ import Debug.Trace
 {-
 TODO:
 - tables
-- bookmarks
 -}
 
 -- | Read RTF from an input string and return a Pandoc document.
@@ -147,6 +146,7 @@ data Properties =
   , gSmallCaps :: Bool
   , gUnderline :: Bool
   , gHyperlink :: Maybe Text
+  , gAnchor :: Maybe Text
   , gImage :: Maybe Pict
   , gFontFamily :: Maybe FontFamily
   , gHidden :: Bool
@@ -167,6 +167,7 @@ instance Default Properties where
                     , gSmallCaps = False
                     , gUnderline = False
                     , gHyperlink = Nothing
+                    , gAnchor = Nothing
                     , gImage = Nothing
                     , gFontFamily = Nothing
                     , gHidden = False
@@ -277,6 +278,9 @@ addFormatting (props, txt) =
   (case gHyperlink props of
      Nothing -> id
      Just linkdest -> B.link linkdest mempty) .
+  (case gAnchor props of
+     Nothing -> id
+     Just ident -> B.spanWith (ident,[],[])) .
   (case gFontFamily props of
      Just Modern -> B.code
      _ -> case gImage props of
@@ -416,7 +420,14 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "expandedcolortbl" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "listtables" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "revtbl" _) : _) -> pure bs
-    Grouped (Tok _ (ControlWord "bkmkstart" _) : _) -> pure bs -- TODO
+    Grouped (Tok _ (ControlWord "bkmkstart" _)
+             : Tok _ (UnformattedText t) : _) -> do
+      -- TODO ideally we'd put the span around bkmkstart/end, but this
+      -- is good for now:
+      modifyGroup (\g -> g{ gAnchor = Just $ T.strip t })
+      addText ""
+      modifyGroup (\g -> g{ gAnchor = Nothing })
+      pure bs
     Grouped (Tok _ (ControlWord "bkmkend" _) : _) -> pure bs -- TODO
     Grouped (Tok _ (ControlWord f _) : _) | isHeaderFooter f -> pure bs
     Grouped (Tok _ (ControlWord "footnote" _) : toks) -> do
