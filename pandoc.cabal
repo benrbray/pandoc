@@ -801,6 +801,7 @@ test-suite test-pandoc
                   Tests.Readers.Org.Meta
                   Tests.Readers.Org.Shared
                   Tests.Readers.RST
+                  Tests.Readers.RTF
                   Tests.Readers.Docx
                   Tests.Readers.Odt
                   Tests.Readers.Txt2Tags

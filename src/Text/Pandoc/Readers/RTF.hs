@@ -585,7 +585,6 @@ emitBlocks bs = do
   annotatedToks <- reverse . sTextContent <$> getState
   updateState $ \s -> s{ sTextContent = [] }
   let justCode = def{ gFontFamily = Just Modern }
-  groups <- sGroupStack <$> getState
   let prop = case annotatedToks of
                [] -> def
                ((p,_):_) -> p
@@ -634,7 +633,7 @@ emitBlocks bs = do
         | all (T.all isSpace . snd) annotatedToks
          -> do
             lists <- closeLists 0
-            pure bs
+            pure $ bs <> lists
         | otherwise -> do
             lists <- closeLists 0
             pure $ bs <> lists <>
