@@ -393,7 +393,7 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "pict" _) : toks) ->
       inGroup $ handlePict bs toks
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
-      inGroup $ handleStylesheet bs toks
+      bs <$ inGroup (handleStylesheet toks)
     Grouped (Tok _ (ControlWord "listtext" _) : _) -> do
       -- eject any previous list items...sometimes TextEdit
       -- doesn't put in a \par
@@ -402,9 +402,9 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
       bs <$ inGroup (processDestinationToks toks)
     Grouped (Tok _ (ControlWord "listtable" _) : toks) ->
-      inGroup $ handleListTable bs toks
+      bs <$ inGroup (handleListTable toks)
     Grouped (Tok _ (ControlWord "listoverridetable" _) : toks) ->
-      inGroup $ handleListOverrideTable bs toks
+      bs <$ inGroup (handleListOverrideTable toks)
     Grouped (Tok _ (ControlWord "wgrffmtfilter" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "themedata" _) : _) -> pure bs
     Grouped (Tok _ (ControlWord "colorschememapping" _) : _) -> pure bs
@@ -663,23 +663,24 @@ handleField bs
          return result
 handleField bs _ = pure bs
 
-handleListTable :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
-handleListTable bs toks = do
-  -- TODO
-  pure bs
+handleListTable :: PandocMonad m => [Tok] -> RTFParser m ()
+handleListTable toks = mapM_ handleList toks
 
-handleListOverrideTable :: PandocMonad m
-                        => Blocks -> [Tok] -> RTFParser m Blocks
-handleListOverrideTable bs toks = do
-  -- TODO
-  pure bs
+handleList :: PandocMonad m => Tok -> RTFParser m ()
+handleList (Tok _ (Grouped (Tok _ (ControlWord "list" _) : toks))) = do
+  undefined -- TODO
+handleList _ = return ()
 
-handleStylesheet :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
-handleStylesheet bs toks = do
+handleListOverrideTable :: PandocMonad m => [Tok] -> RTFParser m ()
+handleListOverrideTable toks = do
+  -- TODO
+  return ()
+
+handleStylesheet :: PandocMonad m => [Tok] -> RTFParser m ()
+handleStylesheet toks = do
   let styles = mapMaybe parseStyle toks
   updateState $ \s -> s{ sStylesheet = IntMap.fromList
                                      $ zip (map styleNum styles) styles }
-  pure bs
 
 parseStyle :: Tok -> Maybe Style
 parseStyle (Tok _ (Grouped toks)) = do
