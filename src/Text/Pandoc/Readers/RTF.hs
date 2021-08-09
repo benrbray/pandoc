@@ -70,6 +70,8 @@ data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
                           , sStylesheet  :: Stylesheet
+                          , sListTable   :: IntMap.IntMap ListAttributes
+                          , sListOverrideTable :: IntMap.IntMap ListAttributes
                           , sEatChars    :: Int
                           } deriving (Show)
 
@@ -82,6 +84,8 @@ instance Default RTFState where
                 , sMetadata = []
                 , sFontTable = mempty
                 , sStylesheet = mempty
+                , sListTable = mempty
+                , sListOverrideTable = mempty
                 , sEatChars = 0
                 }
 
@@ -147,7 +151,7 @@ data Properties =
   , gHidden :: Bool
   , gUC :: Int -- number of ansi chars to skip after unicode char
   , gFootnote :: Maybe Blocks
-  , gOutlineLevel :: Maybe Int
+  , gOutlineLevel :: Maybe ListLevel
   , gListOverride :: Maybe Override
   , gListLevel :: Maybe Int
   } deriving (Show, Eq)
@@ -177,11 +181,12 @@ type RTFParser m = ParserT Sources RTFState m
 data ListType = Bullet | Ordered ListAttributes
   deriving (Show, Eq)
 
-newtype Override = Override Int
-  deriving (Show, Eq)
+type Override = Int
+
+type ListLevel = Int
 
 data Container =
-    List Override Int ListType [Blocks]  -- items in reverse order
+    List Override ListLevel ListType [Blocks]  -- items in reverse order
     deriving (Show, Eq)
 
 parseRTF :: PandocMonad m => RTFParser m Pandoc
@@ -460,7 +465,7 @@ processTok bs (Tok pos tok') = do
     ControlWord "outlinelevel" mbp -> bs <$
       modifyGroup (\g -> g{ gOutlineLevel = mbp })
     ControlWord "ls" mbp -> bs <$
-      modifyGroup (\g -> g{ gListOverride = Override <$> mbp })
+      modifyGroup (\g -> g{ gListOverride = mbp })
     ControlWord "ilvl" mbp -> bs <$
       modifyGroup (\g -> g{ gListLevel = mbp })
     ControlSymbol '\\' -> bs <$ addText "\\"
