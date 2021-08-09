@@ -19,6 +19,6 @@ Pandoc (Meta {unMeta = fromList [("author",MetaInlines [Str "Cynthia",Space,Str 
            ,[Para [Str "Twelve"]]]]]]]]]]]]]
 ,Para [Str "Out",Space,Str "of",Space,Str "list!"]
 ,Para [Str "Start",Space,Str "with"]
-,OrderedList (1,Decimal,Period)
+,OrderedList (7,Decimal,Period)
  [[Para [Str "Seven",Space,Str "Start"]]
  ,[Para [Str "Eight",Space,Str "Continue"]]]]
