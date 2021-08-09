@@ -640,7 +640,9 @@ emitBlocks bs = do
             lists <- closeLists 0
             pure $ bs <> lists <>
                    B.header (lvl + 1)
-                   (B.trimInlines . mconcat $ map addFormatting annotatedToks)
+                   (B.trimInlines . mconcat $ map addFormatting
+                                            $ removeCommonFormatting
+                                              annotatedToks)
         | all ((== justCode) . fst) annotatedToks
          -> do
             lists <- closeLists 0
@@ -655,6 +657,21 @@ emitBlocks bs = do
             pure $ bs <> lists <>
               B.para (B.trimInlines . trimFinalLineBreak . mconcat
                 $ map addFormatting annotatedToks)
+
+-- Headers often have a style applied. We usually want to remove
+-- this, because headers will have their own styling in the target
+-- format.
+removeCommonFormatting :: [(Properties, Text)] -> [(Properties, Text)]
+removeCommonFormatting =
+  (\ts ->
+    if all (gBold . fst) ts
+       then map (\(p,t) -> (p{ gBold = False }, t)) ts
+       else ts) .
+  (\ts ->
+    if all (gItalic . fst) ts
+       then map (\(p,t) -> (p{ gItalic = False }, t)) ts
+       else ts)
+
 
 -- {\field{\*\fldinst{HYPERLINK "http://pandoc.org"}}{\fldrslt foo}}
 handleField :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
