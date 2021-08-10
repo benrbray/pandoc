@@ -65,7 +65,7 @@ type ListLevelTable = IntMap.IntMap ListType
 data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sCharSet     :: CharSet
                           , sGroupStack  :: [Properties]
-                          , sContainerStack :: [Container]
+                          , sListStack :: [List]
                           , sTextContent :: [(Properties, Text)]
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
@@ -79,7 +79,7 @@ instance Default RTFState where
  def = RTFState { sOptions = def
                 , sCharSet = ANSI
                 , sGroupStack = []
-                , sContainerStack = []
+                , sListStack = []
                 , sTextContent = []
                 , sMetadata = []
                 , sFontTable = mempty
@@ -187,7 +187,7 @@ type Override = Int
 
 type ListLevel = Int
 
-data Container =
+data List =
     List Override ListLevel ListType [Blocks]  -- items in reverse order
     deriving (Show, Eq)
 
@@ -560,37 +560,37 @@ processTok bs (Tok pos tok') = do
 processDestinationToks :: PandocMonad m => [Tok] -> RTFParser m Blocks
 processDestinationToks toks = do
   textContent <- sTextContent <$> getState
-  containerStack <- sContainerStack <$> getState
+  liststack <- sListStack <$> getState
   updateState $ \s -> s{ sTextContent = mempty
-                       , sContainerStack = [] }
+                       , sListStack = [] }
   result <- inGroup $
               foldM processTok mempty toks >>= emitBlocks
   unclosed <- closeLists 0
   updateState $ \s -> s{ sTextContent = textContent
-                       , sContainerStack = containerStack }
+                       , sListStack = liststack }
   return $ result <> unclosed
 
 -- close lists >= level
 closeLists :: PandocMonad m => Int -> RTFParser m Blocks
 closeLists lvl = do
-  containers <- sContainerStack <$> getState
-  case containers of
+  lists <- sListStack <$> getState
+  case lists of
     (List _ lvl' lt items : rest) | lvl' >= lvl -> do
       let newlist = (case lt of
                       Bullet -> B.bulletList
                       Ordered listAttr -> B.orderedListWith listAttr)
                     (reverse items)
-      updateState $ \s -> s{ sContainerStack = rest }
+      updateState $ \s -> s{ sListStack = rest }
       case rest of
         [] -> do
-          updateState $ \s -> s{ sContainerStack = rest }
+          updateState $ \s -> s{ sListStack = rest }
           pure newlist
         (List lo lvl'' lt' [] : rest') -> do -- should not happen
-          updateState $ \s -> s{ sContainerStack =
+          updateState $ \s -> s{ sListStack =
                List lo lvl'' lt' [newlist] : rest' }
           closeLists lvl
         (List lo lvl'' lt' (i:is) : rest') -> do
-          updateState $ \s -> s{ sContainerStack =
+          updateState $ \s -> s{ sListStack =
                List lo lvl'' lt' (i <> newlist : is) : rest' }
           closeLists lvl
     _ -> pure mempty
@@ -618,30 +618,30 @@ emitBlocks bs = do
            listOverrideTable <- sListOverrideTable <$> getState
            let listType = fromMaybe Bullet $
                  IntMap.lookup lst listOverrideTable >>= IntMap.lookup level
-           containers <- sContainerStack <$> getState
+           lists <- sListStack <$> getState
            -- get para contents of list item
            let newbs = B.para . B.trimInlines . trimFinalLineBreak . mconcat $
                         map addFormatting annotatedToks
-           case containers of
+           case lists of
              (List lo parentlevel _lt items : cs)
                | lo == lst
                , parentlevel == level
                -- add another item to existing list
                -> do updateState $ \s ->
-                        s{ sContainerStack =
+                        s{ sListStack =
                              List lo level listType (newbs:items) : cs }
                      pure bs
                | lo /= lst || level < parentlevel
                -- close parent list and add new list
                -> do new <- closeLists level  -- close open lists > level
                      updateState $ \s ->
-                       s{ sContainerStack = List lst level listType [newbs] :
-                           sContainerStack s }
+                       s{ sListStack = List lst level listType [newbs] :
+                           sListStack s }
                      pure $ bs <> new
              _ -> do -- add new list (level > parentlevel)
                   updateState $ \s ->
-                    s{ sContainerStack = List lst level listType [newbs] :
-                         sContainerStack s }
+                    s{ sListStack = List lst level listType [newbs] :
+                         sListStack s }
                   pure bs
 
         | Just lvl <- gOutlineLevel prop
@@ -802,9 +802,6 @@ hexToWord  :: Text -> Word8
 hexToWord t = case TR.hexadecimal t of
                 Left _ -> 0
                 Right (x,_) -> x
-
-handleTableRow :: PandocMonad m => [Tok] -> RTFParser m ()
-handleTableRow toks = return () -- TODO
 
 
 handlePict :: PandocMonad m => [Tok] -> RTFParser m ()
