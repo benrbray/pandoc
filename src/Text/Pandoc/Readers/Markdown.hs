@@ -2055,7 +2055,11 @@ divFenced = do
     string ":::"
     skipMany (char ':')
     skipMany spaceChar
-    attribs <- attributes <|> ((\x -> ("",[x],[])) <$> many1Char nonspaceChar)
+    name <- option [] $ pure <$> (many1Char nonspaceChar)
+    skipMany spaceChar
+    (ident, classes, keyval) <- option nullAttr attributes
+    let attribs = (ident, name ++ classes, keyval)
+    guard (attribs /= nullAttr)
     skipMany spaceChar
     skipMany (char ':')
     blankline
