@@ -65,7 +65,8 @@ type ListLevelTable = IntMap.IntMap ListType
 data RTFState = RTFState  { sOptions     :: ReaderOptions
                           , sCharSet     :: CharSet
                           , sGroupStack  :: [Properties]
-                          , sListStack :: [List]
+                          , sListStack   :: [List]
+                          , sTableRows   :: [TableRow] -- reverse order
                           , sTextContent :: [(Properties, Text)]
                           , sMetadata    :: [(Text, Inlines)]
                           , sFontTable   :: FontTable
@@ -80,6 +81,7 @@ instance Default RTFState where
                 , sCharSet = ANSI
                 , sGroupStack = []
                 , sListStack = []
+                , sTableRows = []
                 , sTextContent = []
                 , sMetadata = []
                 , sFontTable = mempty
@@ -189,6 +191,9 @@ type ListLevel = Int
 
 data List =
     List Override ListLevel ListType [Blocks]  -- items in reverse order
+    deriving (Show, Eq)
+
+newtype TableRow = TableRow [Blocks] -- cells in reverse order
     deriving (Show, Eq)
 
 parseRTF :: PandocMonad m => RTFParser m Pandoc
