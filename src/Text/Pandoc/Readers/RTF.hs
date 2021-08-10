@@ -396,7 +396,7 @@ processTok bs (Tok pos tok') = do
     Grouped (Tok _ (ControlWord "field" _) : toks) ->
       inGroup $ handleField bs toks
     Grouped (Tok _ (ControlWord "pict" _) : toks) ->
-      inGroup $ handlePict bs toks
+      bs <$ inGroup (handlePict toks)
     Grouped (Tok _ (ControlWord "stylesheet" _) : toks) ->
       bs <$ inGroup (handleStylesheet toks)
     Grouped (Tok _ (ControlWord "listtext" _) : _) -> do
@@ -803,8 +803,12 @@ hexToWord t = case TR.hexadecimal t of
                 Left _ -> 0
                 Right (x,_) -> x
 
-handlePict :: PandocMonad m => Blocks -> [Tok] -> RTFParser m Blocks
-handlePict bs toks = do
+handleTableRow :: PandocMonad m => [Tok] -> RTFParser m ()
+handleTableRow toks = return () -- TODO
+
+
+handlePict :: PandocMonad m => [Tok] -> RTFParser m ()
+handlePict toks = do
   let pict = foldl' getPictData def toks
   let altText = "image"
   let binToWord = T.foldl' (\acc x -> acc * 2 + fromIntegral (digitToInt x)) 0
@@ -830,7 +834,6 @@ handlePict bs toks = do
       addText altText
       modifyGroup $ \g -> g{ gImage = Nothing }
     _ -> return ()
-  return bs
  where
   getPictData :: Pict -> Tok -> Pict
   getPictData pict (Tok _ tok') =
